@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>XAU/USD Analysis Agent</title>
+<style>
+:root{
+  --bg:#0b1020;--panel:#121a2e;--panel2:#17213a;--text:#ecf1ff;--muted:#9eabc7;
+  --accent:#f6c453;--green:#3ddc97;--red:#ff6b6b;--blue:#65a7ff;--border:#283451;
+}
+*{box-sizing:border-box}
+body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:linear-gradient(180deg,#070b16,#0b1020);color:var(--text)}
+.app{max-width:1280px;margin:auto;padding:18px}
+header{background:linear-gradient(135deg,#182541,#10172a);border:1px solid var(--border);border-radius:20px;padding:24px;box-shadow:0 16px 40px rgba(0,0,0,.3)}
+h1{margin:0;font-size:clamp(28px,5vw,46px)}
+header p{color:var(--muted);line-height:1.6;margin-bottom:0}
+.badge{display:inline-block;margin-top:12px;padding:7px 11px;border-radius:999px;background:rgba(246,196,83,.12);color:var(--accent);border:1px solid rgba(246,196,83,.3);font-size:13px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:18px;padding:18px;box-shadow:0 10px 25px rgba(0,0,0,.18)}
+.card h2{margin:0 0 14px;font-size:20px}
+label{display:block;font-weight:700;margin:12px 0 7px}
+input,select,textarea{width:100%;padding:12px;border-radius:11px;border:1px solid var(--border);background:#0d1426;color:var(--text);font-size:14px}
+textarea{min-height:120px;resize:vertical}
+.row{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+button{border:0;border-radius:11px;padding:11px 15px;font-weight:800;cursor:pointer}
+.primary{background:var(--accent);color:#1b1b1b}
+.secondary{background:#24314e;color:var(--text)}
+.danger{background:#3a1c27;color:#ffb0b0}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.stat{background:var(--panel2);border:1px solid var(--border);border-radius:13px;padding:13px}
+.stat .label{font-size:12px;color:var(--muted)}
+.stat .value{font-size:20px;font-weight:800;margin-top:4px}
+.bias{font-size:30px;font-weight:900}
+.bull{color:var(--green)} .bear{color:var(--red)} .neutral{color:var(--accent)}
+.meter{height:12px;background:#222d47;border-radius:999px;overflow:hidden;margin:10px 0}
+.meter>div{height:100%;background:linear-gradient(90deg,var(--red),var(--accent),var(--green));width:50%}
+.explanation{line-height:1.7;color:#dbe4fb}
+.signal-list{display:grid;gap:8px}
+.signal{padding:11px 12px;border-radius:10px;background:#0f172a;border-left:4px solid var(--blue);color:#dce6ff}
+canvas{width:100%;height:360px;background:#0b1223;border-radius:12px;border:1px solid var(--border)}
+.small{font-size:13px;color:var(--muted);line-height:1.5}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px;border-bottom:1px solid var(--border);text-align:right}
+th:first-child,td:first-child{text-align:left}
+.pill{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700}
+.pill.green{background:rgba(61,220,151,.12);color:var(--green)}
+.pill.red{background:rgba(255,107,107,.12);color:var(--red)}
+.pill.gold{background:rgba(246,196,83,.12);color:var(--accent)}
+.full{grid-column:1/-1}
+@media(max-width:900px){.grid{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+  <h1>XAU/USD Analysis Agent</h1>
+  <p>Upload historical gold data from MT5 or TradingView. The agent calculates technical indicators, detects trend and support/resistance, and produces a structured market bias.</p>
+  <span class="badge">Offline analysis • No API key required</span>
+</header>
+
+<div class="grid">
+  <section class="card">
+    <h2>1. Import Gold Data</h2>
+    <label>CSV file</label>
+    <input type="file" id="csvFile" accept=".csv">
+    <p class="small">Expected columns: Date/Time, Open, High, Low, Close, Volume. Column names may vary.</p>
+    <div class="row">
+      <button class="primary" onclick="loadCSV()">Analyze CSV</button>
+      <button class="secondary" onclick="loadDemo()">Load Demo Data</button>
+      <button class="danger" onclick="resetApp()">Reset</button>
+    </div>
+
+    <label>Timeframe</label>
+    <select id="timeframe">
+      <option>15 Minute</option>
+      <option>1 Hour</option>
+      <option selected>4 Hour</option>
+      <option>Daily</option>
+    </select>
+
+    <label>Fundamental Notes</label>
+    <textarea id="fundamentals" placeholder="Example: US CPI is tomorrow. Dollar index is weakening. Fed tone is cautious."></textarea>
+  </section>
+
+  <section class="card">
+    <h2>2. Market Summary</h2>
+    <div id="bias" class="bias neutral">Waiting for data</div>
+    <div class="meter"><div id="scoreBar"></div></div>
+    <div class="small">Technical score: <span id="scoreText">0</span> / 100</div>
+    <div class="stats" style="margin-top:14px">
+      <div class="stat"><div class="label">Last Price</div><div class="value" id="lastPrice">—</div></div>
+      <div class="stat"><div class="label">RSI 14</div><div class="value" id="rsiVal">—</div></div>
+      <div class="stat"><div class="label">ATR 14</div><div class="value" id="atrVal">—</div></div>
+      <div class="stat"><div class="label">Trend</div><div class="value" id="trendVal">—</div></div>
+    </div>
+  </section>
+
+  <section class="card full">
+    <h2>3. Price Chart</h2>
+    <canvas id="chart" width="1200" height="360"></canvas>
+  </section>
+
+  <section class="card">
+    <h2>4. Indicator Results</h2>
+    <table>
+      <thead><tr><th>Indicator</th><th>Value</th><th>Signal</th></tr></thead>
+      <tbody id="indicatorTable"></tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>5. Key Levels</h2>
+    <div class="stats">
+      <div class="stat"><div class="label">Resistance 1</div><div class="value" id="r1">—</div></div>
+      <div class="stat"><div class="label">Resistance 2</div><div class="value" id="r2">—</div></div>
+      <div class="stat"><div class="label">Support 1</div><div class="value" id="s1">—</div></div>
+      <div class="stat"><div class="label">Support 2</div><div class="value" id="s2">—</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>6. Agent Explanation</h2>
+    <div id="explanation" class="explanation">Upload a CSV file or load demo data to begin.</div>
+  </section>
+
+  <section class="card">
+    <h2>7. Risk Calculator</h2>
+    <label>Account balance ($)</label><input id="balance" type="number" value="1000">
+    <label>Risk per trade (%)</label><input id="riskPct" type="number" value="1" step="0.1">
+    <label>Stop loss distance ($ per ounce)</label><input id="stopDistance" type="number" value="10" step="0.1">
+    <div class="row"><button class="primary" onclick="calculateRisk()">Calculate Position Size</button></div>
+    <div id="riskOutput" class="explanation" style="margin-top:12px"></div>
+  </section>
+
+  <section class="card full">
+    <h2>8. Full Trading Checklist</h2>
+    <div id="checklist" class="signal-list"></div>
+  </section>
+</div>
+</div>
+
+<script>
+let candles=[];
+
+function parseNum(v){
+  if(v===undefined||v===null)return NaN;
+  return parseFloat(String(v).replace(/,/g,'').trim());
+}
+
+function detectColumns(headers){
+  const map={};
+  headers.forEach((h,i)=>{
+    const x=h.toLowerCase().trim();
+    if(x.includes('date')||x.includes('time')) map.date ??= i;
+    if(x==='open'||x.includes('<open>')) map.open=i;
+    if(x==='high'||x.includes('<high>')) map.high=i;
+    if(x==='low'||x.includes('<low>')) map.low=i;
+    if(x==='close'||x.includes('<close>')||x.includes('last')) map.close=i;
+    if(x.includes('volume')||x.includes('tickvol')) map.volume=i;
+  });
+  return map;
+}
+
+function parseCSV(text){
+  const lines=text.trim().split(/\r?\n/).filter(Boolean);
+  const delimiter=lines[0].includes(';')?';':',';
+  const headers=lines[0].split(delimiter).map(x=>x.replace(/"/g,'').trim());
+  const c=detectColumns(headers);
+  const out=[];
+  for(let i=1;i<lines.length;i++){
+    const row=lines[i].split(delimiter).map(x=>x.replace(/"/g,'').trim());
+    const item={
+      date: c.date!==undefined?row[c.date]:String(i),
+      open: parseNum(row[c.open]),
+      high: parseNum(row[c.high]),
+      low: parseNum(row[c.low]),
+      close: parseNum(row[c.close]),
+      volume: c.volume!==undefined?parseNum(row[c.volume]):0
+    };
+    if([item.open,item.high,item.low,item.close].every(Number.isFinite)) out.push(item);
+  }
+  return out;
+}
+
+function loadCSV(){
+  const file=document.getElementById('csvFile').files[0];
+  if(!file){alert('Choose a CSV file first.');return;}
+  const reader=new FileReader();
+  reader.onload=e=>{
+    candles=parseCSV(e.target.result);
+    if(candles.length<50){alert('At least 50 valid candles are recommended.');}
+    analyze();
+  };
+  reader.readAsText(file);
+}
+
+function loadDemo(){
+  candles=[];
+  let price=2330;
+  for(let i=0;i<260;i++){
+    const drift=0.28;
+    const noise=(Math.random()-.48)*12;
+    const open=price;
+    const close=Math.max(1800,open+drift+noise);
+    const high=Math.max(open,close)+Math.random()*5;
+    const low=Math.min(open,close)-Math.random()*5;
+    candles.push({date:'Demo '+(i+1),open,high,low,close,volume:Math.round(500+Math.random()*1200)});
+    price=close;
+  }
+  analyze();
+}
+
+function ema(values,period){
+  const k=2/(period+1); const result=[]; let prev=values[0];
+  values.forEach((v,i)=>{prev=i===0?v:v*k+prev*(1-k);result.push(prev)});
+  return result;
+}
+function sma(values,period){
+  return values.map((_,i)=>i<period-1?NaN:values.slice(i-period+1,i+1).reduce((a,b)=>a+b,0)/period);
+}
+function rsi(values,period=14){
+  let gains=0,losses=0; const out=Array(values.length).fill(NaN);
+  for(let i=1;i<=period;i++){const d=values[i]-values[i-1];if(d>=0)gains+=d;else losses-=d}
+  let avgGain=gains/period, avgLoss=losses/period;
+  out[period]=100-(100/(1+(avgGain/(avgLoss||1e-9))));
+  for(let i=period+1;i<values.length;i++){
+    const d=values[i]-values[i-1],g=Math.max(d,0),l=Math.max(-d,0);
+    avgGain=(avgGain*(period-1)+g)/period; avgLoss=(avgLoss*(period-1)+l)/period;
+    out[i]=100-(100/(1+(avgGain/(avgLoss||1e-9))));
+  }
+  return out;
+}
+function atr(data,period=14){
+  const tr=data.map((c,i)=>i===0?c.high-c.low:Math.max(c.high-c.low,Math.abs(c.high-data[i-1].close),Math.abs(c.low-data[i-1].close)));
+  return ema(tr,period);
+}
+function macd(values){
+  const e12=ema(values,12),e26=ema(values,26);
+  const line=values.map((_,i)=>e12[i]-e26[i]);
+  const signal=ema(line,9);
+  return {line,signal,hist:line.map((v,i)=>v-signal[i])};
+}
+function last(arr){return arr[arr.length-1]}
+function fmt(v){return Number.isFinite(v)?v.toFixed(2):'—'}
+
+function levels(data){
+  const recent=data.slice(-80);
+  const highs=[...recent].sort((a,b)=>b.high-a.high).map(x=>x.high);
+  const lows=[...recent].sort((a,b)=>a.low-b.low).map(x=>x.low);
+  const unique=(arr,tol=.002)=>{
+    const out=[];
+    arr.forEach(v=>{if(!out.some(x=>Math.abs(x-v)/v<tol))out.push(v)});
+    return out;
+  };
+  const uh=unique(highs), ul=unique(lows);
+  return {r1:uh[0],r2:uh[1]||uh[0],s1:ul[0],s2:ul[1]||ul[0]};
+}
+
+function analyze(){
+  if(candles.length<20)return;
+  const closes=candles.map(x=>x.close);
+  const e20=ema(closes,20),e50=ema(closes,50),e200=ema(closes,Math.min(200,closes.length));
+  const r=rsi(closes,14),a=atr(candles,14),m=macd(closes),lv=levels(candles);
+  const p=last(closes), rsiNow=last(r), atrNow=last(a), e20n=last(e20),e50n=last(e50),e200n=last(e200),macdN=last(m.line),sigN=last(m.signal),histN=last(m.hist);
+
+  let score=50, signals=[];
+  if(p>e20n){score+=8;signals.push('Price is above EMA 20: short-term bullish pressure.')}else{score-=8;signals.push('Price is below EMA 20: short-term bearish pressure.')}
+  if(e20n>e50n){score+=10;signals.push('EMA 20 is above EMA 50: positive trend structure.')}else{score-=10;signals.push('EMA 20 is below EMA 50: negative trend structure.')}
+  if(p>e200n){score+=12;signals.push('Price is above the long-term EMA: broader trend is supportive.')}else{score-=12;signals.push('Price is below the long-term EMA: broader trend is weak.')}
+  if(rsiNow>55&&rsiNow<70){score+=8;signals.push('RSI shows healthy bullish momentum.')}
+  else if(rsiNow<45&&rsiNow>30){score-=8;signals.push('RSI shows bearish momentum.')}
+  else if(rsiNow>=70){score-=3;signals.push('RSI is overbought: upside may be stretched.')}
+  else if(rsiNow<=30){score+=3;signals.push('RSI is oversold: rebound risk is elevated.')}
+  if(macdN>sigN){score+=10;signals.push('MACD is above its signal line.')}else{score-=10;signals.push('MACD is below its signal line.')}
+  if(histN>0){score+=4}else{score-=4}
+  score=Math.max(0,Math.min(100,score));
+
+  let bias='Neutral', cls='neutral';
+  if(score>=65){bias='Bullish';cls='bull'}
+  else if(score<=35){bias='Bearish';cls='bear'}
+
+  document.getElementById('bias').textContent=bias+' Bias';
+  document.getElementById('bias').className='bias '+cls;
+  document.getElementById('scoreBar').style.width=score+'%';
+  document.getElementById('scoreText').textContent=score;
+  document.getElementById('lastPrice').textContent=fmt(p);
+  document.getElementById('rsiVal').textContent=fmt(rsiNow);
+  document.getElementById('atrVal').textContent=fmt(atrNow);
+  document.getElementById('trendVal').textContent=e20n>e50n?'Up':'Down';
+  document.getElementById('r1').textContent=fmt(lv.r1);
+  document.getElementById('r2').textContent=fmt(lv.r2);
+  document.getElementById('s1').textContent=fmt(lv.s1);
+  document.getElementById('s2').textContent=fmt(lv.s2);
+
+  const rows=[
+    ['EMA 20',fmt(e20n),p>e20n?'Bullish':'Bearish'],
+    ['EMA 50',fmt(e50n),e20n>e50n?'Bullish':'Bearish'],
+    ['EMA 200',fmt(e200n),p>e200n?'Bullish':'Bearish'],
+    ['RSI 14',fmt(rsiNow),rsiNow>55?'Bullish':rsiNow<45?'Bearish':'Neutral'],
+    ['MACD',fmt(macdN),macdN>sigN?'Bullish':'Bearish'],
+    ['ATR 14',fmt(atrNow),'Volatility']
+  ];
+  document.getElementById('indicatorTable').innerHTML=rows.map(x=>{
+    const c=x[2]==='Bullish'?'green':x[2]==='Bearish'?'red':'gold';
+    return `<tr><td>${x[0]}</td><td>${x[1]}</td><td><span class="pill ${c}">${x[2]}</span></td></tr>`;
+  }).join('');
+
+  const f=document.getElementById('fundamentals').value.trim();
+  document.getElementById('explanation').innerHTML=`
+    <strong>${bias} technical bias with a score of ${score}/100.</strong><br>
+    The current price is ${fmt(p)}. EMA alignment is ${e20n>e50n?'positive':'negative'}, RSI is ${fmt(rsiNow)}, and MACD momentum is ${macdN>sigN?'supportive':'weak'}.
+    Volatility measured by ATR is ${fmt(atrNow)}, so stop losses that are too tight may be vulnerable to normal market movement.
+    <br><br><strong>Fundamental context:</strong> ${f||'No fundamental notes were entered. Add CPI, NFP, Federal Reserve, US dollar, yield, or geopolitical information before making a decision.'}
+    <br><br><strong>Important:</strong> This is a rule-based educational analysis, not a guaranteed forecast or financial advice.`;
+
+  document.getElementById('checklist').innerHTML=signals.map(s=>`<div class="signal">${s}</div>`).join('')+
+    `<div class="signal">Resistance: ${fmt(lv.r1)} and ${fmt(lv.r2)}. Support: ${fmt(lv.s1)} and ${fmt(lv.s2)}.</div>
+     <div class="signal">Check high-impact USD news before entering.</div>
+     <div class="signal">Define invalidation before entry and risk no more than your planned percentage.</div>`;
+
+  drawChart(closes,e20,e50);
+}
+
+function drawChart(closes,e20,e50){
+  const c=document.getElementById('chart'),ctx=c.getContext('2d');
+  const data=closes.slice(-140), a=e20.slice(-140),b=e50.slice(-140);
+  const min=Math.min(...data,...a,...b),max=Math.max(...data,...a,...b);
+  ctx.clearRect(0,0,c.width,c.height);
+  ctx.fillStyle='#0b1223';ctx.fillRect(0,0,c.width,c.height);
+  ctx.strokeStyle='#24304a';ctx.lineWidth=1;
+  for(let i=1;i<6;i++){const y=i*c.height/6;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(c.width,y);ctx.stroke()}
+  const plot=(arr,color,width)=>{
+    ctx.strokeStyle=color;ctx.lineWidth=width;ctx.beginPath();
+    arr.forEach((v,i)=>{
+      const x=i/(arr.length-1)*c.width;
+      const y=c.height-((v-min)/(max-min||1))*c.height;
+      if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    });ctx.stroke();
+  };
+  plot(data,'#f6c453',2.4);plot(a,'#65a7ff',1.6);plot(b,'#ff6b6b',1.6);
+}
+
+function calculateRisk(){
+  const bal=parseFloat(document.getElementById('balance').value);
+  const risk=parseFloat(document.getElementById('riskPct').value);
+  const stop=parseFloat(document.getElementById('stopDistance').value);
+  if(!(bal>0&&risk>0&&stop>0)){document.getElementById('riskOutput').textContent='Enter valid positive numbers.';return}
+  const dollars=bal*risk/100;
+  const ounces=dollars/stop;
+  const standardLots=ounces/100;
+  document.getElementById('riskOutput').innerHTML=`Maximum planned loss: <strong>$${dollars.toFixed(2)}</strong><br>Approximate position: <strong>${ounces.toFixed(2)} oz</strong> or <strong>${standardLots.toFixed(3)} standard lots</strong>.<br><span class="small">Broker contract sizes may differ. Confirm in MT5 symbol specifications.</span>`;
+}
+
+function resetApp(){
+  candles=[];document.getElementById('csvFile').value='';
+  document.getElementById('bias').textContent='Waiting for data';
+  document.getElementById('bias').className='bias neutral';
+  document.getElementById('explanation').textContent='Upload a CSV file or load demo data to begin.';
+  document.getElementById('indicatorTable').innerHTML='';
+  document.getElementById('checklist').innerHTML='';
+  ['lastPrice','rsiVal','atrVal','trendVal','r1','r2','s1','s2'].forEach(id=>document.getElementById(id).textContent='—');
+  const c=document.getElementById('chart');c.getContext('2d').clearRect(0,0,c.width,c.height);
+}
+</script>
+</body>
+</html>
